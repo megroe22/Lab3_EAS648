@@ -1,0 +1,294 @@
+---
+title: "Lab3_Megroe"
+author: "Megan Roe-Leon"
+date: "2025-11-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Exploring water related photos in Michigan.
+
+# Packages and data
+
+
+```{r}
+library(readr)
+library(ggplot2)
+library(ggthemes)
+library(gganimate)
+library(foreign)
+library(dplyr)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(gifski)
+library(lubridate)
+#library(tidyverse)
+library(wesanderson)
+library(stringr)
+
+```
+
+
+```{r}
+MichFlickr <- read.csv("MichiganFlickr.csv")
+```
+
+First, let’s inspect the distribution and then plot the time series. Here we will filter the Flickr dataset for some Water-Related terms in the titles. If a title contains any of the words water, lake, river, beach, stream, or creek then the WaterRelated Column will have TRUE value, and if not, FALSE. 
+
+```{r}
+
+MichFlickr <- MichFlickr %>%
+  mutate(
+    # Flickr upload times are Unix seconds; assume UTC unless you know otherwise
+    date = as.POSIXct(dateupload, origin = "1970-01-01", tz = "UTC"),
+    date = as.Date(date),
+
+    year  = year(date),
+    month = factor(month(date, label = TRUE, abbr = TRUE),
+                   levels = month.abb, ordered = TRUE),
+    day   = day(date),
+
+    count = 1L,
+    WaterRelated = str_detect(
+      string = title,
+      regex("water|lake|river|beach|stream|creek", ignore_case = TRUE)
+    )
+  )
+    
+    
+  #water_related <- MichFlickr %>%
+ # filter(str_detect(title, regex("water|lake|river|beach|stream|creek", ignore_case = TRUE)))
+```
+
+
+3. Ploting a time series, we need to summarise the photos per day. We will use the mutate, group_by and "summarise" function to create this new table 
+
+```{r}
+daily_photography <- MichFlickr %>%
+  mutate(day = as.Date(date, format="%Y-%m-%d")) %>%
+  group_by(day) %>% # group by the day column
+  summarise(total_photos=sum(count)) %>%  # calculate the SUM of all precipitation that occurred on each day
+  na.omit()
+head(daily_photography)
+
+
+```
+
+4. Now we can plot this data. Here we are still looking at the total photos on FLickr in the state of Michigan. We are not filtering/distingusishing between water related photos yet. 
+
+```{r}
+p <- ggplot(daily_photography, aes(x = day, y = total_photos)) +
+  geom_line(color = "#00AFBB", size = 1) + 
+  scale_x_date(date_labels = "%b")
+p
+```
+
+5. We can apply a minimum to make the plot more legible 
+
+```{r}
+## Let's set a minimum to omit the few points
+## in before 2005
+min <- as.Date("2005-1-1")
+max <- NA
+
+# Set axis limits c(min, max)
+p + scale_x_date(limits = c(min, max))
+```
+
+6. Let's smooth this data to see the trend of photographic sharing for the State.  
+
+```{r}
+p + stat_smooth(method = "loess", formula = y ~ x, size = 1) + 
+scale_x_date(limits = c(min, max))
+```
+
+We can also smooth it based on a spline function. 
+
+```{r}
+p + geom_smooth(method = lm, formula = y ~ splines::bs(x, 3), se = FALSE) + 
+scale_x_date(limits = c(min, max))
+
+```
+
+7. Here we incorporate the different categories under WaterRelated column. So the TRUE value indicates that the photo's title contained at least one of the water related terms we listed before. True values (Water Related Photos) are showing in the blue color, while the non water related values are the orange color. 
+
+```{r}
+daily_water <- MichFlickr %>%
+  filter(!is.na(WaterRelated)) %>% #removing NAs
+  mutate(day = as.Date(date, format="%Y-%m-%d")) %>%
+  group_by(day, WaterRelated) %>% 
+  summarise(total_photos = sum(count), .groups = "drop")
+
+ggplot(daily_water, aes(x = day, y = total_photos)) + 
+  geom_line(aes(color = WaterRelated), size = 1) +
+  scale_color_manual(values = c("#E7B800","#00AFBB")) +
+  scale_x_date(limits = c(min, max)) +
+  theme_minimal()
+```
+7.Let's check if there is a monthly pattern of sharing photograph through Flickr. 
+
+```{r}
+daily_monthly <- daily_photography %>%
+    mutate(month =  month(ymd(daily_photography$day), label = TRUE, abbr = FALSE),
+           year  = year(as.Date(day, format = "%Y-%m-%d"))) %>%
+    group_by(year,month) %>%
+    summarise(total.qty = sum(total_photos)) 
+daily_monthly
+```
+
+
+8. Now that we have summarized this data in to another dataframe we can plot the different years of photography by month. Here, we begin to see some interesting results! We see that the highest activity is in the summer months AND going into the fall months (Sept and Oct).
+
+```{r}
+daily_monthly  %>%
+    filter(year > 2004)  %>% 
+    ggplot(aes(x = month, y = total.qty, group = year)) +
+    geom_line(aes(color = as.factor(year))) +
+    scale_color_discrete() + 
+    labs(title = "Total Flickr Photographs for Michigan", x = "", y = "Total Photographs",
+         subtitle = "Activity is highest for the summer months") +
+   theme_classic()
+```
+
+9. We can also do a similar weekly analysis. First we make dataframe that summarizes the data per week.   
+
+```{r}
+weekly <- daily_photography %>%
+    mutate(weekday =  wday(ymd(daily_photography$day), label = TRUE, abbr = FALSE),
+           year  = year(as.Date(day, format = "%Y-%m-%d"))) %>%
+    group_by(year,weekday) %>%
+    summarise(total.qty = sum(total_photos)) 
+weekly
+```
+
+Now we can plot this data. The graph here clearly shows that the photo activity is highest on weekends, which makes sense given the typical U.S. work weeks. 
+
+```{r}
+weekly  %>%
+    filter(year > 2004)  %>% 
+    ggplot(aes(x = weekday, y = total.qty, group = year)) +
+    geom_line(aes(color = as.factor(year))) +
+    scale_color_discrete() + 
+    labs(title = "Total Flickr Photographs for Michigan", x = "", y = "Total Photographs",
+         subtitle = "Activity is highest on the weekends") +
+  theme_bw()
+```
+
+10. Now, we will explore peaks in the time series data. We will do this for the WaterRelated data.  
+
+```{r}
+library(ggpmisc)
+daily_water_only <- MichFlickr %>%
+ mutate(year = year(as.Date(date, format = "%Y-%m-%d")), 
+        month =  month(ymd(date), label = TRUE, abbr = FALSE)) %>%
+  filter(WaterRelated == TRUE) %>%
+  group_by(date, year, month) %>% # group by the day column
+  summarise(total_photos=sum(count)) 
+
+daily_water_only
+
+```
+
+11. Now we will plot the peaks and valleys for the water-related photos. I chose to look at the year 2012 and the month of August. 
+
+```{r}
+daily_water_only  %>%  
+    filter(year == '2012' & month=='August')  %>% 
+ggplot(aes(x = as.POSIXct(date), y = total_photos), as.numeric = FALSE) + 
+  geom_line() + 
+  stat_peaks(colour = "red") +
+  stat_peaks(geom = "text", colour = "red", angle = 45,
+               vjust = 1.5, hjust = 1,  x.label.fmt = "%d%B") +
+  stat_valleys(colour = "blue") +
+ stat_valleys(geom = "text", colour = "blue", angle = 360,
+             vjust = 1.5, hjust = 1,  x.label.fmt = "%d%B")
+```
+# Time Series Analaysis Summary:
+
+The questions I aimed to answer in this lab were: 1) When do people post the most? 2) When do people post the most about water-related photos? 3)Are there any trends as to where people are posting more about water-related topics? (ex: coastal areas) 
+
+We began by exploring overall trends with the data from Flickr as whole, not distinguishing water related photos from non water related photos. We saw that peak of total photos was in the early 2010s, that people mostly posted on weekends, and there was a peak of activity in the summer months (like July- Oct). Interestingly, when we did distinguish between water related photos and non-related water photos, we saw that the total_photos for water related photos was much smaller than the non-water related photos. Considering how many bodies of water there are in Michigan, I expected the total number of water-related photos to be much higher. 
+
+From the information gathered in these exploratory time analysis, I decided to focus in on the peaks and valleys for the year 2012 in the month of august, since these were both time points of high activity. This is the logic behidn the choice for choosing 2012 for the spatial anlaysis component. 
+
+
+## Animating spatial data
+12. Now that we have analyzed the temporal patterns of this data, let's examine the spatio-temporal patterns.
+
+```{r}
+######Data for Michigan
+states <- map_data("state")
+mich <- subset(states, region == "michigan")
+mich <- states %>%
+  filter(region == "michigan")
+counties <- map_data("county")
+mich_county <- subset(counties, region == "michigan")
+
+
+ggplot(data = mich) + 
+  geom_polygon(aes(x = long, y = lat), fill = "palegreen", color = "black") + 
+  coord_fixed(1.3)
+```
+
+13. We can alter the data to another theme and also get rid of the weird line. 
+
+```{r}
+mich <- ggplot(data = mich, mapping = aes(x = long, y = lat, group = group)) + 
+  coord_fixed(1.3) + 
+  geom_polygon(color = "black", fill = "orange")
+mich
+
+mich + theme_classic()
+```
+
+14. We can add the counties. 
+
+```{r}
+mich + theme_classic() + 
+  geom_polygon(data = mich_county, fill = NA, color = "white") +
+  geom_polygon(color = "black", fill = NA)  # get the state border back on top
+```
+
+
+15. Omit the gradicule
+
+```{r}
+mich + theme_void() + 
+  geom_polygon(data = mich_county, fill = NA, color = "white") +
+  geom_polygon(color = "black", fill = NA) # get the state border back on top
+```
+
+16. Now let's process data that we want to animate. I am choosing 2012 because it was a year with high activity on Flickr in Michigan, as we discovered in our time series analysis.
+
+```{r}
+MichFlickr$date <- as.Date(as.POSIXct(MichFlickr$dateupload, origin="1970-01-01"))
+#min <- as.Date("2008-01-01")
+#max  <- as.Date("2015-01-01")
+animateMich <- MichFlickr %>% 
+  filter( date >= as.Date('2012-01-01') & date <= as.Date('2012-12-31'))
+```
+
+17. Animate function. 
+
+```{r}
+p2 <-mich + theme_void() + 
+        geom_polygon(data = mich_county, fill = NA, color = "white") +
+        geom_polygon(color = "black", fill = NA) + 
+        
+       geom_point(data = animateMich, aes(longitude, latitude), inherit.aes = FALSE) +
+        labs(title = 'Date: {format(frame_time, "%b %d %Y")}') +
+        transition_time(date) 
+
+animate(p2 + shadow_wake(0.1), fps=2)
+#animate(p2 + shadow_wake(0.1, size = 1, alpha = FALSE, colour = 'grey92'), fps=2)
+```
+# Temporal-Spatial Analysis Summary: 
+
+I choose to use data from 2012 because it was one of the years with the most activity. My hypothesis was two fold: that there would be increase water-related photos in the summer/early fall months (that aligns with the heightened activity we saw in our time series analysis) and 2) that there would be an increase in photos near coastal areas. Understanding how cold and harsh Michigan winters can be, I predicted that we would see a much greater activity of water related-photos in the warmer months. I also chose to focus on coastal areas, understanding that most of Michigan's major cities are inland, meaning that it's likely theses hubs have a higher "background" social media activity level due to larger population sizes.
+
+When we look at the animation, we see that there is some support of the hypothesis. Beginning in June, we begin to see much more activity along the coast of Lake Michigan, and in August and September, we begin to see much more of the coastal regions having water-related activity. This is true even for the Upper Peninsula. It is important to note that a lot of the activity, throughout the entire year, is still concentrated in major hubs like Metro Detroit, Grand Rapids, Battle Creek/Kalamazoo area, and Lansing. This is logically sound when you consider that most of Michigan's population reside in the major cities.
+
+
